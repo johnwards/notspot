@@ -14,6 +14,7 @@ import { ObjectCreateDialog } from '@/components/objects/ObjectCreateDialog'
 import type { SearchResult, CrmObject } from '@/api/types'
 import { Loader2, Plus } from 'lucide-react'
 import { toast } from 'sonner'
+import { singularize } from '@/lib/utils'
 
 const DISPLAY_PROPERTY_FALLBACKS: Record<string, string> = {
   contacts: 'email',
@@ -134,7 +135,7 @@ export function AssociationSearchDialog({
     // After creating a new object via the create dialog, close it and
     // let the user search again to find the newly created record
     setCreateOpen(false)
-    toast.success(`${toType.slice(0, -1)} created — search to associate it`)
+    toast.success(`${singularize(toType)} created — search to associate it`)
   }, [toType])
 
   const label = toType.charAt(0).toUpperCase() + toType.slice(1)
@@ -191,7 +192,7 @@ export function AssociationSearchDialog({
             onClick={() => setCreateOpen(true)}
           >
             <Plus className="h-4 w-4" />
-            Create new {toType.slice(0, -1)}
+            Create new {singularize(toType)}
           </Button>
         </div>
       </CommandDialog>

@@ -169,7 +169,7 @@ test.describe('Record Detail Page', () => {
 
     // Should navigate to company detail page
     await page.waitForURL(`**/companies/${company.id}`);
-    await expect(page.getByText('About this Companie')).toBeVisible();
+    await expect(page.getByText('About this Company')).toBeVisible();
   });
 
   test('breadcrumbs show correct path', async ({ page }) => {

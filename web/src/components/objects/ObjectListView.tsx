@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Plus, Inbox, Search, Filter, Columns } from 'lucide-react'
 import type { CrmObject, Property, FilterGroup } from '@/api/types'
+import { singularize } from '@/lib/utils'
 
 interface ObjectListViewProps {
   objectType: string
@@ -292,7 +293,7 @@ export function ObjectListView({ objectType }: ObjectListViewProps) {
           description={
             useSearch
               ? 'Try adjusting your search query or filters.'
-              : `Create your first ${objectType.slice(0, -1)} to get started.`
+              : `Create your first ${singularize(objectType)} to get started.`
           }
           actionLabel={useSearch ? undefined : 'Create'}
           onAction={useSearch ? undefined : () => setCreateOpen(true)}

@@ -15,6 +15,7 @@ import { useProperties } from '@/api/hooks/useProperties'
 import { apiFetch } from '@/api/client'
 import { toast } from 'sonner'
 import { Plus, X } from 'lucide-react'
+import { singularize } from '@/lib/utils'
 
 const ASSOCIATION_TARGETS: Record<string, string[]> = {
   deals: ['contacts', 'companies'],
@@ -74,8 +75,8 @@ export function ObjectCreateDialog({
           void Promise.all(assocPromises).then(() => {
             const assocCount = pendingAssociations.length
             const msg = assocCount > 0
-              ? `${objectType.slice(0, -1)} created with ${assocCount} association${assocCount > 1 ? 's' : ''}`
-              : `${objectType.slice(0, -1)} created`
+              ? `${singularize(objectType)} created with ${assocCount} association${assocCount > 1 ? 's' : ''}`
+              : `${singularize(objectType)} created`
             toast.success(msg)
             setPendingAssociations([])
             handleClose(false)

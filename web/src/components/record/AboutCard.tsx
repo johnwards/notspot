@@ -13,6 +13,7 @@ import { OwnerSelect } from '@/components/shared/OwnerSelect'
 import { useUpdateObject } from '@/api/hooks/useObjects'
 import { toast } from 'sonner'
 import type { CrmObject, Property } from '@/api/types'
+import { singularize } from '@/lib/utils'
 
 interface AboutCardProps {
   objectType: string
@@ -79,13 +80,14 @@ export function AboutCard({ objectType, objectId, object, properties }: AboutCar
     )
   }
 
-  const label = objectType.charAt(0).toUpperCase() + objectType.slice(1)
+  const singular = singularize(objectType)
+  const label = singular.charAt(0).toUpperCase() + singular.slice(1)
 
   return (
     <>
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">About this {label.slice(0, -1)}</CardTitle>
+          <CardTitle className="text-base">About this {label}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           {visibleProps.map((prop) => {

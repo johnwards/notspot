@@ -220,6 +220,36 @@ func (s *SQLiteSchemaStore) Create(ctx context.Context, schema *domain.ObjectSch
 		return nil, err
 	}
 
+	// Persist the schema's OWN property definitions (subject, body, step_number, ...) so they are
+	// visible in the UI and the properties API — not merely stored as EAV values with no definition
+	// (which renders blank). Real HubSpot creates these from the create body's `properties`. Mirrors
+	// the canonical insert in properties.go Create; INSERT OR IGNORE tolerates overlap with the
+	// default hs_* properties created above.
+	for i := range schema.Properties {
+		p := &schema.Properties[i]
+		optStr, err := encodeOptions(p.Options)
+		if err != nil {
+			return nil, fmt.Errorf("encode options for property %q: %w", p.Name, err)
+		}
+		group := p.GroupName
+		if group == "" {
+			group = "schemainfo"
+		}
+		_, err = s.db.ExecContext(ctx,
+			`INSERT OR IGNORE INTO property_definitions (
+				object_type_id, name, label, type, field_type, group_name, description,
+				display_order, has_unique_value, hidden, form_field, calculated,
+				external_options, hubspot_defined, options, archived, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE, ?, FALSE, ?, ?)`,
+			typeID, p.Name, p.Label, p.Type, p.FieldType, group, p.Description,
+			p.DisplayOrder, p.HasUniqueValue, p.Hidden, p.FormField, p.Calculated,
+			p.ExternalOptions, optStr, ts, ts,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("create schema property %q: %w", p.Name, err)
+		}
+	}
+
 	// Auto-register default association types for declared associated objects.
 	for _, assocObj := range schema.AssociatedObjects {
 		assocTypeID, err := ResolveObjectType(ctx, s.db, assocObj)

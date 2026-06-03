@@ -27,7 +27,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	corrID := api.CorrelationID(r.Context())
 
 	var body struct {
-		Properties map[string]string `json:"properties"`
+		Properties domain.Properties `json:"properties"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		api.WriteError(w, http.StatusBadRequest, api.NewValidationError("Invalid input JSON", corrID, nil))
@@ -143,7 +143,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	corrID := api.CorrelationID(r.Context())
 
 	var body struct {
-		Properties map[string]string `json:"properties"`
+		Properties domain.Properties `json:"properties"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		api.WriteError(w, http.StatusBadRequest, api.NewValidationError("Invalid input JSON", corrID, nil))

@@ -1,5 +1,42 @@
 package domain
 
+import "encoding/json"
+
+// Properties is a HubSpot-style property bag. HubSpot accepts property values as JSON strings,
+// numbers, or booleans on writes and coerces them all to strings; a strict map[string]string would
+// reject a numeric value (e.g. an integer step_number or icp_score) at JSON-decode time with a 400.
+// UnmarshalJSON mirrors HubSpot by stringifying any JSON scalar, so clients that legitimately send
+// numbers/booleans (as the real API allows) interoperate. Underlying type stays map[string]string,
+// so it is assignable to/from a plain map[string]string throughout the store and validators.
+type Properties map[string]string
+
+// UnmarshalJSON decodes each value as a raw token and stringifies scalars: a JSON string is
+// unquoted, null becomes "", and numbers/booleans keep their literal text (e.g. 7 -> "7").
+func (p *Properties) UnmarshalJSON(b []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	m := make(map[string]string, len(raw))
+	for k, v := range raw {
+		s := string(v)
+		switch {
+		case s == "null":
+			m[k] = ""
+		case s != "" && s[0] == '"':
+			var str string
+			if err := json.Unmarshal(v, &str); err != nil {
+				return err
+			}
+			m[k] = str
+		default: // number, boolean -> literal JSON text (HubSpot stores these as strings)
+			m[k] = s
+		}
+	}
+	*p = m
+	return nil
+}
+
 // Object represents a CRM object (contact, company, deal, etc.).
 type Object struct {
 	ID         string            `json:"id"`
@@ -12,20 +49,20 @@ type Object struct {
 
 // CreateInput holds the data needed to create a new object.
 type CreateInput struct {
-	Properties map[string]string `json:"properties"`
+	Properties Properties `json:"properties"`
 }
 
 // UpdateInput holds the data needed to update an existing object.
 type UpdateInput struct {
-	ID         string            `json:"id"`
-	Properties map[string]string `json:"properties"`
+	ID         string     `json:"id"`
+	Properties Properties `json:"properties"`
 }
 
 // UpsertInput holds the data for an upsert operation.
 type UpsertInput struct {
-	ID         string            `json:"id,omitempty"`
-	IDProperty string            `json:"idProperty,omitempty"`
-	Properties map[string]string `json:"properties"`
+	ID         string     `json:"id,omitempty"`
+	IDProperty string     `json:"idProperty,omitempty"`
+	Properties Properties `json:"properties"`
 }
 
 // ListOpts holds the parameters for listing objects.

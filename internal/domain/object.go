@@ -37,14 +37,26 @@ func (p *Properties) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// HistoryValue is a single point-in-time property value, mirroring HubSpot's
+// ValueWithTimestamp schema. The required trio is value + timestamp + sourceType;
+// sourceId and sourceLabel are optional and omitted when empty.
+type HistoryValue struct {
+	Value       string `json:"value"`
+	Timestamp   string `json:"timestamp"`
+	SourceType  string `json:"sourceType"`
+	SourceID    string `json:"sourceId,omitempty"`
+	SourceLabel string `json:"sourceLabel,omitempty"`
+}
+
 // Object represents a CRM object (contact, company, deal, etc.).
 type Object struct {
-	ID         string            `json:"id"`
-	Properties map[string]string `json:"properties"`
-	CreatedAt  string            `json:"createdAt"`
-	UpdatedAt  string            `json:"updatedAt"`
-	Archived   bool              `json:"archived"`
-	ArchivedAt string            `json:"archivedAt,omitempty"`
+	ID                    string                    `json:"id"`
+	Properties            map[string]string         `json:"properties"`
+	PropertiesWithHistory map[string][]HistoryValue `json:"propertiesWithHistory,omitempty"`
+	CreatedAt             string                    `json:"createdAt"`
+	UpdatedAt             string                    `json:"updatedAt"`
+	Archived              bool                      `json:"archived"`
+	ArchivedAt            string                    `json:"archivedAt,omitempty"`
 }
 
 // CreateInput holds the data needed to create a new object.

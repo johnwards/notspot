@@ -65,6 +65,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	corrID := api.CorrelationID(r.Context())
 
 	props := parsePropertiesParam(r)
+	historyProps := parsePropertiesWithHistoryParam(r)
 	idProperty := r.URL.Query().Get("idProperty")
 
 	var obj *domain.Object
@@ -82,6 +83,15 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 		api.WriteError(w, http.StatusInternalServerError, &api.Error{Status: "error", Message: err.Error(), CorrelationID: corrID, Category: "INTERNAL_ERROR"})
 		return
+	}
+
+	if len(historyProps) > 0 {
+		history, hErr := h.store.Objects.GetHistory(r.Context(), obj.ID, historyProps)
+		if hErr != nil {
+			api.WriteError(w, http.StatusInternalServerError, &api.Error{Status: "error", Message: hErr.Error(), CorrelationID: corrID, Category: "INTERNAL_ERROR"})
+			return
+		}
+		obj.PropertiesWithHistory = history
 	}
 
 	api.WriteJSON(w, http.StatusOK, obj)
@@ -229,8 +239,9 @@ func (h *Handler) BatchRead(w http.ResponseWriter, r *http.Request) {
 		Inputs []struct {
 			ID string `json:"id"`
 		} `json:"inputs"`
-		Properties []string `json:"properties"`
-		IDProperty string   `json:"idProperty"`
+		Properties            []string `json:"properties"`
+		PropertiesWithHistory []string `json:"propertiesWithHistory"`
+		IDProperty            string   `json:"idProperty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		api.WriteError(w, http.StatusBadRequest, api.NewValidationError("Invalid input JSON", corrID, nil))
@@ -255,6 +266,17 @@ func (h *Handler) BatchRead(w http.ResponseWriter, r *http.Request) {
 		}
 		api.WriteError(w, http.StatusInternalServerError, &api.Error{Status: "error", Message: err.Error(), CorrelationID: corrID, Category: "INTERNAL_ERROR"})
 		return
+	}
+
+	if len(body.PropertiesWithHistory) > 0 {
+		for _, obj := range result.Results {
+			history, hErr := h.store.Objects.GetHistory(r.Context(), obj.ID, body.PropertiesWithHistory)
+			if hErr != nil {
+				api.WriteError(w, http.StatusInternalServerError, &api.Error{Status: "error", Message: hErr.Error(), CorrelationID: corrID, Category: "INTERNAL_ERROR"})
+				return
+			}
+			obj.PropertiesWithHistory = history
+		}
 	}
 
 	api.WriteJSON(w, http.StatusOK, result)
@@ -435,7 +457,18 @@ func (h *Handler) validatePropertyValues(ctx context.Context, objectType string,
 }
 
 func parsePropertiesParam(r *http.Request) []string {
-	v := r.URL.Query().Get("properties")
+	return parseCSVParam(r, "properties")
+}
+
+// parsePropertiesWithHistoryParam reads the comma-separated propertiesWithHistory
+// query param on a single-object GET. Like properties it is an independent selector
+// of property names.
+func parsePropertiesWithHistoryParam(r *http.Request) []string {
+	return parseCSVParam(r, "propertiesWithHistory")
+}
+
+func parseCSVParam(r *http.Request, key string) []string {
+	v := r.URL.Query().Get(key)
 	if v == "" {
 		return nil
 	}

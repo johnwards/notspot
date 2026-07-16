@@ -24,6 +24,7 @@ type ObjectStore interface {
 	BatchUpsert(ctx context.Context, objectType string, inputs []domain.UpsertInput, idProperty string) (*domain.BatchResult, error)
 	BatchArchive(ctx context.Context, objectType string, ids []string) error
 	Merge(ctx context.Context, objectType, primaryID, mergeID string) (*domain.Object, error)
+	GetHistory(ctx context.Context, objectID string, props []string) (map[string][]domain.HistoryValue, error)
 }
 
 // ErrNotFound is returned when a requested object does not exist.
@@ -600,4 +601,61 @@ func (s *SQLiteObjectStore) getProperties(ctx context.Context, objectID string, 
 		result[name] = value
 	}
 	return result, rows.Err()
+}
+
+// GetHistory returns the recorded value history for the named properties of an
+// object, newest-first, mirroring HubSpot's propertiesWithHistory response. Only
+// the explicitly requested props are queried (no default-property union) — history
+// is an independent selector. Properties with no recorded history are simply absent
+// from the returned map; an empty props list yields a nil map.
+func (s *SQLiteObjectStore) GetHistory(ctx context.Context, objectID string, props []string) (map[string][]domain.HistoryValue, error) {
+	if len(props) == 0 {
+		return nil, nil
+	}
+
+	placeholders := make([]string, len(props))
+	args := make([]any, 0, len(props)+1)
+	args = append(args, objectID)
+	for i, p := range props {
+		placeholders[i] = "?"
+		args = append(args, p)
+	}
+
+	// timestamp DESC gives newest-first; id DESC breaks ties deterministically when
+	// multiple writes share a coarse text timestamp (AUTOINCREMENT id is monotonic).
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT property_name, value, timestamp, source, source_id
+		 FROM property_value_history
+		 WHERE object_id = ? AND property_name IN (`+strings.Join(placeholders, ",")+`)
+		 ORDER BY timestamp DESC, id DESC`,
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get property history: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	result := make(map[string][]domain.HistoryValue)
+	for rows.Next() {
+		var name string
+		var value, source, sourceID sql.NullString
+		var timestamp string
+		if err := rows.Scan(&name, &value, &timestamp, &source, &sourceID); err != nil {
+			return nil, fmt.Errorf("scan property history: %w", err)
+		}
+		sourceType := source.String
+		if sourceType == "" {
+			sourceType = "API"
+		}
+		result[name] = append(result[name], domain.HistoryValue{
+			Value:      value.String,
+			Timestamp:  timestamp,
+			SourceType: sourceType,
+			SourceID:   sourceID.String,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration: %w", err)
+	}
+	return result, nil
 }

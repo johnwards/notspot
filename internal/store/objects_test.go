@@ -364,3 +364,115 @@ func TestCreateWithObjectTypeID(t *testing.T) {
 		t.Fatal("expected non-empty ID")
 	}
 }
+
+func TestGetHistoryNewestFirst(t *testing.T) {
+	s := setupStore(t)
+	ctx := context.Background()
+
+	// Set the property at create time, then update it twice with distinct values.
+	obj, err := s.Create(ctx, "contacts", map[string]string{
+		"email":          "hist@example.com",
+		"lifecyclestage": "subscriber",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := s.Update(ctx, "contacts", obj.ID, map[string]string{"lifecyclestage": "lead"}); err != nil {
+		t.Fatalf("update 1: %v", err)
+	}
+	if _, err := s.Update(ctx, "contacts", obj.ID, map[string]string{"lifecyclestage": "opportunity"}); err != nil {
+		t.Fatalf("update 2: %v", err)
+	}
+
+	hist, err := s.GetHistory(ctx, obj.ID, []string{"lifecyclestage"})
+	if err != nil {
+		t.Fatalf("get history: %v", err)
+	}
+
+	entries := hist["lifecyclestage"]
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 versions, got %d", len(entries))
+	}
+
+	wantNewestFirst := []string{"opportunity", "lead", "subscriber"}
+	for i, want := range wantNewestFirst {
+		if entries[i].Value != want {
+			t.Errorf("entry[%d]: expected value %q, got %q", i, want, entries[i].Value)
+		}
+		if entries[i].Timestamp == "" {
+			t.Errorf("entry[%d]: expected non-empty timestamp", i)
+		}
+		if entries[i].SourceType != "API" {
+			t.Errorf("entry[%d]: expected sourceType API, got %q", i, entries[i].SourceType)
+		}
+	}
+}
+
+func TestGetHistoryEmptyAndUnknownProps(t *testing.T) {
+	s := setupStore(t)
+	ctx := context.Background()
+
+	obj, err := s.Create(ctx, "contacts", map[string]string{"email": "empty@example.com"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Empty props list yields a nil map (no query).
+	hist, err := s.GetHistory(ctx, obj.ID, nil)
+	if err != nil {
+		t.Fatalf("get history (empty): %v", err)
+	}
+	if hist != nil {
+		t.Errorf("expected nil map for empty props, got %v", hist)
+	}
+
+	// Unknown property has no recorded history — absent from the map, no error.
+	hist, err = s.GetHistory(ctx, obj.ID, []string{"never_written"})
+	if err != nil {
+		t.Fatalf("get history (unknown): %v", err)
+	}
+	if _, ok := hist["never_written"]; ok {
+		t.Errorf("expected unknown property to be absent, got %v", hist)
+	}
+}
+
+func TestGetHistoryIDTieBreak(t *testing.T) {
+	db := testhelpers.NewTestDB(t)
+	ctx := context.Background()
+	if err := database.Migrate(ctx, db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if err := seed.Seed(ctx, db); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	s := store.NewSQLiteObjectStore(db)
+
+	obj, err := s.Create(ctx, "contacts", map[string]string{"email": "tie@example.com"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Insert two history rows sharing the SAME coarse timestamp. Newest-first must
+	// fall back to AUTOINCREMENT id (write order), so the second insert wins index 0.
+	const ts = "2026-01-01T00:00:00.000Z"
+	for _, v := range []string{"first", "second"} {
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO property_value_history (object_id, property_name, value, timestamp) VALUES (?, ?, ?, ?)`,
+			obj.ID, "tie_prop", v, ts,
+		); err != nil {
+			t.Fatalf("insert history: %v", err)
+		}
+	}
+
+	hist, err := s.GetHistory(ctx, obj.ID, []string{"tie_prop"})
+	if err != nil {
+		t.Fatalf("get history: %v", err)
+	}
+	entries := hist["tie_prop"]
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 versions, got %d", len(entries))
+	}
+	if entries[0].Value != "second" || entries[1].Value != "first" {
+		t.Errorf("expected id-DESC tie-break [second, first], got [%s, %s]", entries[0].Value, entries[1].Value)
+	}
+}

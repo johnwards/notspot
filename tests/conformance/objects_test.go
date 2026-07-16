@@ -501,3 +501,136 @@ func TestBatchLimitExceeded(t *testing.T) {
 	result := readJSON(t, resp)
 	assertHubSpotError(t, result, "VALIDATION_ERROR")
 }
+
+// patchContact updates a single contact property and returns the response body.
+func patchContact(t *testing.T, id string, props map[string]string) map[string]any {
+	t.Helper()
+	body := map[string]any{"properties": props}
+	resp := doRequest(t, http.MethodPatch, "/crm/v3/objects/contacts/"+id, body)
+	mustStatus(t, resp, http.StatusOK)
+	return readJSON(t, resp)
+}
+
+// assertHistoryEntry validates a single ValueWithTimestamp entry has the required
+// trio (value/timestamp/sourceType) and returns its value.
+func assertHistoryEntry(t *testing.T, entry map[string]any) string {
+	t.Helper()
+	value := assertIsString(t, entry, "value")
+	assertISOTimestamp(t, assertIsString(t, entry, "timestamp"))
+	assertStringField(t, entry, "sourceType", "API")
+	return value
+}
+
+func TestGetContactPropertiesWithHistory(t *testing.T) {
+	resetServer(t)
+
+	// Set the tracked property at create time, then PATCH it twice with distinct values.
+	created := createContact(t, map[string]string{
+		"email":                        "history@example.com",
+		"recent_conversion_event_name": "signup-form",
+	})
+	id := assertIsString(t, created, "id")
+
+	patchContact(t, id, map[string]string{"recent_conversion_event_name": "demo-request"})
+	patchContact(t, id, map[string]string{"recent_conversion_event_name": "pricing-page"})
+
+	// propertiesWithHistory is an independent selector: request the property ONLY in
+	// propertiesWithHistory (not in properties) and confirm it still appears.
+	resp := doRequest(t, http.MethodGet,
+		"/crm/v3/objects/contacts/"+id+"?properties=email&propertiesWithHistory=recent_conversion_event_name,does_not_exist", nil)
+	mustStatus(t, resp, http.StatusOK)
+	result := readJSON(t, resp)
+
+	assertSimplePublicObject(t, result)
+
+	history := assertIsObject(t, result, "propertiesWithHistory")
+
+	// Unknown property named in the param is silently ignored — no key, no error.
+	if _, ok := history["does_not_exist"]; ok {
+		t.Errorf("expected unknown property to be absent from propertiesWithHistory")
+	}
+
+	entries := assertIsArray(t, history, "recent_conversion_event_name")
+	// One create-time row + two PATCH rows = 3 versions.
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 history versions, got %d", len(entries))
+	}
+
+	// Newest-first: index 0 is the most recent write, last is the earliest.
+	values := make([]string, len(entries))
+	for i, e := range entries {
+		values[i] = assertHistoryEntry(t, toObject(t, e))
+	}
+	if values[0] != "pricing-page" {
+		t.Errorf("expected newest entry to be %q, got %q", "pricing-page", values[0])
+	}
+	if values[len(values)-1] != "signup-form" {
+		t.Errorf("expected oldest entry to be %q, got %q", "signup-form", values[len(values)-1])
+	}
+	if values[1] != "demo-request" {
+		t.Errorf("expected middle entry to be %q, got %q", "demo-request", values[1])
+	}
+}
+
+func TestGetContactWithoutHistoryOmitsField(t *testing.T) {
+	resetServer(t)
+
+	created := createContact(t, map[string]string{"email": "nohistory@example.com"})
+	id := assertIsString(t, created, "id")
+
+	resp := doRequest(t, http.MethodGet, "/crm/v3/objects/contacts/"+id+"?properties=email", nil)
+	mustStatus(t, resp, http.StatusOK)
+	result := readJSON(t, resp)
+
+	// When propertiesWithHistory is not requested, the field is omitted entirely.
+	if _, ok := result["propertiesWithHistory"]; ok {
+		t.Errorf("expected propertiesWithHistory to be absent when not requested")
+	}
+}
+
+func TestBatchReadPropertiesWithHistory(t *testing.T) {
+	resetServer(t)
+
+	c1 := createContact(t, map[string]string{"email": "bh1@example.com", "lifecyclestage": "subscriber"})
+	c2 := createContact(t, map[string]string{"email": "bh2@example.com", "lifecyclestage": "subscriber"})
+	id1 := assertIsString(t, c1, "id")
+	id2 := assertIsString(t, c2, "id")
+
+	patchContact(t, id1, map[string]string{"lifecyclestage": "lead"})
+	patchContact(t, id2, map[string]string{"lifecyclestage": "lead"})
+
+	body := map[string]any{
+		"inputs": []map[string]string{
+			{"id": id1},
+			{"id": id2},
+		},
+		"properties":            []string{"email"},
+		"propertiesWithHistory": []string{"lifecyclestage"},
+	}
+
+	resp := doRequest(t, http.MethodPost, "/crm/v3/objects/contacts/batch/read", body)
+	mustStatus(t, resp, http.StatusOK)
+	result := readJSON(t, resp)
+
+	results := assertIsArray(t, result, "results")
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	for _, r := range results {
+		obj := toObject(t, r)
+		assertSimplePublicObject(t, obj)
+		history := assertIsObject(t, obj, "propertiesWithHistory")
+		entries := assertIsArray(t, history, "lifecyclestage")
+		// create-time "subscriber" + PATCH "lead" = 2 versions, newest-first.
+		if len(entries) != 2 {
+			t.Fatalf("expected 2 history versions, got %d", len(entries))
+		}
+		if v := assertHistoryEntry(t, toObject(t, entries[0])); v != "lead" {
+			t.Errorf("expected newest entry to be %q, got %q", "lead", v)
+		}
+		if v := assertHistoryEntry(t, toObject(t, entries[1])); v != "subscriber" {
+			t.Errorf("expected oldest entry to be %q, got %q", "subscriber", v)
+		}
+	}
+}
